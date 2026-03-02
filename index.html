@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils"></script>
+    <style>
+        body { background: #0f172a; color: white; font-family: 'Inter', sans-serif; display: flex; flex-direction: column; align-items: center; }
+        #video-container { position: relative; border: 4px solid #38bdf8; border-radius: 15px; overflow: hidden; }
+        canvas { position: absolute; top: 0; left: 0; }
+        .output { font-size: 3rem; margin-top: 20px; color: #38bdf8; text-transform: uppercase; }
+    </style>
+</head>
+<body>
+    <h1>ISL Real-Time Recognition</h1>
+    <div id="video-container">
+        <video id="input_video" width="640px" height="480px"></video>
+        <canvas id="output_canvas" width="640px" height="480px"></canvas>
+    </div>
+    <div class="output" id="gesture_output">Waiting...</div>
+
+    <script>
+        const videoElement = document.getElementById('input_video');
+        const canvasElement = document.getElementById('output_canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+        const outputText = document.getElementById('gesture_output');
+        const socket = new WebSocket('ws://localhost:8000/ws');
+
+        const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+        // Faster: complexity 0 and 2 hands
+hands.setOptions({ 
+    maxNumHands: 2, 
+    modelComplexity: 0, 
+    minDetectionConfidence: 0.5, 
+    minTrackingConfidence: 0.5 
+});
+
+hands.onResults((results) => {
+    canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+    
+    // Create a fixed-size array of 126 (2 hands * 63 landmarks)
+    let allLandmarks = new Array(126).fill(0); 
+
+    if (results.multiHandLandmarks) {
+        results.multiHandLandmarks.forEach((landmarks, index) => {
+            if (index < 2) { 
+                drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {color: '#38bdf8', lineWidth: 5});
+                
+                const coords = landmarks.map(l => [l.x, l.y, l.z]).flat();
+                // Place hand 1 at 0-62, hand 2 at 63-125
+                allLandmarks.splice(index * 63, 63, ...coords);
+            }
+        });
+
+        if (socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({landmarks: allLandmarks}));
+        }
+    }
+});
+
+        socket.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            if(outputText.innerText !== data.prediction) {
+                outputText.innerText = data.prediction;
+                // SPEECH FEEDBACK
+                const utterance = new SpeechSynthesisUtterance(data.prediction);
+                window.speechSynthesis.speak(utterance);
+            }
+        };
+
+        const camera = new Camera(videoElement, {
+            onFrame: async () => { await hands.send({image: videoElement}); },
+            width: 640, height: 480
+        });
+        camera.start();
+    </script>
+</body>
+</html>
